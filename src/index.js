@@ -82,7 +82,7 @@ window.onload = () => {
     canvas.height = height;
 
     mouseX = width/2;
-    mouseY = height/2;
+    mouseY = height/3;
 
     gl = canvas.getContext("webgl2");
 

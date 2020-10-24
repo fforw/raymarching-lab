@@ -7,6 +7,7 @@ uniform vec4 u_mouse;
 const float pi = 3.141592653589793;
 const float tau = pi * 2.0;
 const float hpi = pi * 0.5;
+const float phi = (1.0+sqrt(5.0))/2.0;
 
 // "ShaderToy Tutorial - Ray Marching Primitives"
 // by Martijn Steinrucken aka BigWings/CountFrolic - 2019
@@ -16,8 +17,10 @@ const float hpi = pi * 0.5;
 // https://youtu.be/Ff0jJyyiVyw
 
 #define MAX_STEPS 100
-#define MAX_DIST 100.
+#define MAX_DIST 1000.
 #define SURF_DIST .001
+
+float snoise(vec3 v);
 
 mat2 Rot(float a) {
     float s = sin(a);
@@ -59,92 +62,129 @@ float sdCylinder(vec3 p, vec3 a, vec3 b, float r) {
     return e+i;
 }
 
+float sdSphere( vec3 p, float s )
+{
+    return length(p)-s;
+}
+
 float sdTorus(vec3 p, vec2 r) {
     float x = length(p.xz)-r.x;
     return length(vec2(x, p.y))-r.y;
 }
+
+float sdRoundBox( vec3 p, vec3 b, float r )
+{
+    vec3 q = abs(p) - b;
+    return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0) - r;
+}
+
 
 float dBox(vec3 p, vec3 s) {
     p = abs(p)-s;
     return length(max(p, 0.))+min(max(p.x, max(p.y, p.z)), 0.);
 }
 
+vec2 minId(vec2 curr, float d, float id)
+{
+    if (d < curr.x)
+    {
+        curr.x = d;
+        curr.y = id;
+    }
 
-float GetDist(vec3 p) {
+    return curr;
+}
+
+vec2 sminId(vec2 curr, float d, float id)
+{
+    if (d < curr.x)
+    {
+        curr.x = smin(curr.x, d, 0.5);
+        curr.y = id;
+    }
+
+    return curr;
+}
+
+float displacement(vec3 p)
+{
+    return 1.0 + snoise(p);
+}
+
+float onion( in float d, in float h )
+{
+    return abs(d)-h;
+}
+
+vec2 GetDist(vec3 p) {
 
     float t = u_time;
 
     // ground plane
     float pd = p.y;
 
-    // rotating box
-    vec3 bp = p;
-    bp -= vec3(0, .75, 3);// translation
-    bp.xz *= Rot(u_time);// rotation
-    float rotate = dBox(bp, vec3(.75));
+    vec2 result = vec2(1e6, 0);
 
-    // jumping torus
-    float y = -fract(t)*(fract(t)-1.);// repeating parabola
-    vec3 tp = p;
-    tp -= vec3(-2, .8+3.*y, -4);// translate
-    float squash = 1.+smoothstep(.15, .0, y)*.5;// scale
-    tp.y *= squash;
-    tp = tp.xzy;// flip torus on its side
-    float scale = sdTorus(tp, vec2(1, .25))/squash;
+    vec3 tBox = vec3(2,1,2);
+    vec3 pBox = p - tBox;// translate
 
-    float morph = mix(
-    length(p-vec3(4, 1, 2))-1.,
-    dBox(p-vec3(4, 1, 2), vec3(1, 1, 1)),
-    sin(t)*.5+.5
-    );
+    vec3 c = vec3(3.0, 4.0, 3.0);
+    vec3 q = mod(pBox+0.5*c,c)-0.5*c;
+    float rotate = sdRoundBox(q, vec3(0.8), 0.25);
 
-    float subtract = max(
-    -dBox(p-vec3(1.+sin(t)*.5, 1, 0), vec3(1, .5, 2)),
-    length(p-vec3(0, 1, 0))-1.
-    );
+    result = minId(result, rotate, 2.0);
 
-    float intersect = max(
-    dBox(p-vec3(sin(u_time)*.5-3., 1, 0), vec3(1, .5, 2)),
-    length(p-vec3(-4, 1, 0))-1.
-    );
+    float r = 6.5 + sin(u_time * 0.5) * 3.5;
+    float sphere = sdSphere(p, r);
 
-    float blend = smin(
-    length(p-vec3(3, 1, -3))-.75,
-    length(p-vec3(3.+sin(t), 1.5, -3))-1.,
-    0.05
-    );
+    float onion = onion(onion(onion(onion(sphere, 3.2), 1.6), 0.8), 0.4);
 
-    float d = min(morph, pd);
-    d = min(d, subtract);
-    d = min(d, intersect);
-    d = min(d, rotate);
-    d = min(d, scale);
-    d = min(d, blend);
+    result.y = 0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5;
 
-    return d;
-}
-
-float RayMarch(vec3 ro, vec3 rd) {
-    float dO=0.;
-
-    for (int i=0; i<MAX_STEPS; i++) {
-        vec3 p = ro + rd*dO;
-        float dS = abs(GetDist(p));
-        dO += dS;
-        if (dO>MAX_DIST || dS<SURF_DIST) break;
+    if (-onion > result.x)
+    {
+        result.x = -onion;
+        result.y = -result.y;
     }
 
-    return dO;
+
+    //result = minId(result, pd, 1.0);
+    //result = minId(result, sphere, 3.0);
+
+
+
+    return result;
+}
+
+
+vec2 RayMarch(vec3 ro, vec3 rd) {
+
+
+    float dO=0.;
+    float id = 0.0;
+
+    for (int i=0; i < MAX_STEPS; i++) {
+        vec3 p = ro + rd*dO;
+        vec2 result = GetDist(p);
+        float dS = abs(result.x);
+        dO += dS;
+        id = result.y;
+        if ( dO > MAX_DIST || dS < SURF_DIST)
+            break;
+    }
+
+    return vec2(dO, id);
 }
 
 vec3 GetNormal(vec3 p) {
-    float d = GetDist(p);
+    float d = GetDist(p).x;
     vec2 e = vec2(.001, 0);
 
     vec3 n = d - vec3(
-    GetDist(p-e.xyy),
-    GetDist(p-e.yxy),
-    GetDist(p-e.yyx));
+        GetDist(p-e.xyy).x,
+        GetDist(p-e.yxy).x,
+        GetDist(p-e.yyx).x
+    );
 
     return normalize(n);
 }
@@ -155,7 +195,7 @@ float GetLight(vec3 p) {
     vec3 n = GetNormal(p);
 
     float dif = clamp(dot(n, l)*.5+.5, 0., 1.);
-    float d = RayMarch(p+n*SURF_DIST*2., l);
+    float d = RayMarch(p+n*SURF_DIST*2., l).x;
 
     if (p.y<.01 && d<length(lightPos-p)) dif *= .2;
 
@@ -301,27 +341,29 @@ void main(void)
     vec2 m = u_mouse.xy/u_resolution.xy;
 
     vec3 col = vec3(0);
-
     vec3 ro = vec3(0, 4, -5);
     ro.yz *= Rot(-m.y+.5);
     ro.xz *= Rot(u_time*.3-m.x*6.2831);
 
-    vec3 rd = R(uv, ro, vec3(0, 0, 0), .7);
+    vec3 rd = R(uv, ro, vec3(0, 0, 0), 0.5);
 
-    float d = RayMarch(ro, rd);
+    vec2 result = RayMarch(ro, rd);
 
+    float d = result.x;
 
     if (d < MAX_DIST) {
         vec3 p = ro + rd * d;
-
-        bool isGround = abs(p.y) < 0.02 || max(abs(p.x), abs(p.z)) > 10.0;
-
         float dif = GetLight(p) / (d*d);
-        col = vec3(dif)* hsl2rgb(
-            fract((0.5 + 0.5 * snoise(34.0 + p * 0.82)) * 0.333 + (0.5 + 0.5 * snoise(13.0 + p * 0.061 + (isGround ? 0.0 : u_time * 0.1 ))) + (isGround ? 0.0 : 0.5) ),
-            isGround ? 0.4 : 0.9,
-            0.5
+
+        vec3 tone = hsl2rgb(
+            fract(abs(result.y) + (result.y > 0.0 ? 0.5 : 0.0)),
+            result.y > 0.0 ? 1.0 : 0.5,
+            result.y > 0.0 ? 0.55 : 0.02
         );
+
+        tone.x = clamp(tone.x * 2.0, 0.0, 1.0);
+
+        col = vec3(dif)* tone;
 
     }
 
