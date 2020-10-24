@@ -1,7 +1,7 @@
 #!/bin/bash
 yarn run build
 
-target=/static/demo/raymarching-lab-2
+target=/static/demo/raymarching-lab-3.1
 
 echo "Synch to http://fforw.de/$target"
 

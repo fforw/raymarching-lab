@@ -79,6 +79,11 @@ float sdRoundBox( vec3 p, vec3 b, float r )
 }
 
 
+float sdBeam( vec3 p, vec3 c )
+{
+    return length(p.xz-c.xy)-c.z;
+}
+
 float dBox(vec3 p, vec3 s) {
     p = abs(p)-s;
     return length(max(p, 0.))+min(max(p.x, max(p.y, p.z)), 0.);
@@ -116,6 +121,28 @@ float onion( in float d, in float h )
     return abs(d)-h;
 }
 
+float sdHexPrism( vec3 p, vec2 h )
+{
+    const vec3 k = vec3(-0.8660254, 0.5, 0.57735);
+    p = abs(p);
+    p.xy -= 2.0*min(dot(k.xy, p.xy), 0.0)*k.xy;
+    vec2 d = vec2(
+    length(p.xy-vec2(clamp(p.x,-k.z*h.x,k.z*h.x), h.x))*sign(p.y-h.x),
+    p.z-h.y );
+    return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+
+float sdBoundingBox( vec3 p, vec3 b, float e )
+{
+    p = abs(p  )-b;
+    vec3 q = abs(p+e)-e;
+    return min(min(
+    length(max(vec3(p.x,q.y,q.z),0.0))+min(max(p.x,max(q.y,q.z)),0.0),
+    length(max(vec3(q.x,p.y,q.z),0.0))+min(max(q.x,max(p.y,q.z)),0.0)),
+    length(max(vec3(q.x,q.y,p.z),0.0))+min(max(q.x,max(q.y,p.z)),0.0));
+}
+
 vec2 GetDist(vec3 p) {
 
     float t = u_time;
@@ -125,33 +152,47 @@ vec2 GetDist(vec3 p) {
 
     vec2 result = vec2(1e6, 0);
 
-    vec3 tBox = vec3(2,1,2);
-    vec3 pBox = p - tBox;// translate
 
-    vec3 c = vec3(3.0, 4.0, 3.0);
-    vec3 q = mod(pBox+0.5*c,c)-0.5*c;
-    float rotate = sdRoundBox(q, vec3(0.8), 0.25);
+    vec3 c = vec3(8.0, 8.0, 8.0);
+    p = mod(p+0.5*c,c)-0.5*c;
 
-    result = minId(result, rotate, 2.0);
+    float len = 3.6;
+    float radius = 0.25;
 
-    float r = 6.5 + sin(u_time * 0.5) * 3.5;
-    float sphere = sdSphere(p, r);
-
-    float onion = onion(onion(onion(onion(sphere, 3.2), 1.6), 0.8), 0.4);
-
-    result.y = 0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5;
-
-    if (-onion > result.x)
     {
-        result.x = -onion;
-        result.y = -result.y;
+        float zBeam = sdHexPrism(p, vec2(radius,len));
+
+        result = minId(result, zBeam,  0.05/*0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5*/);
     }
 
+    {
+        vec3 xPos = p;
+        xPos.xz *= Rot(tau/4.0);
+        float xBeam = sdHexPrism(xPos, vec2(radius,len));
+        result = minId(result, xBeam,  0.6/*0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5*/);
+    }
 
-    //result = minId(result, pd, 1.0);
-    //result = minId(result, sphere, 3.0);
+    {
+        vec3 zPos = p;
+        zPos.zy *= Rot(tau/4.0);
+        float xBeam = sdHexPrism(zPos, vec2(radius,len));
+        result = minId(result, xBeam,  0.64/*0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5*/);
+    }
+
+    result.x -=  0.1;
+
+    float sphere = sdBoundingBox( p , vec3(0.9), 0.1 ) - 0.1;
+
+    /*
+float opRound( in sdf3d primitive, float rad )
+{
+    return primitive(p) - rad
+}
+    */
 
 
+
+    result = minId(result, sphere, 0.1/*0.5 + snoise(floor((pBox + c * 0.5)/c)) * 0.5*/);
 
     return result;
 }
@@ -190,14 +231,14 @@ vec3 GetNormal(vec3 p) {
 }
 
 float GetLight(vec3 p) {
-    vec3 lightPos = vec3(3, 5, 4);
-    vec3 l = normalize(lightPos-p);
+    vec3 lightPos = vec3(0, 10, -4.0 + u_time * 2.0 );
+    vec3 l = normalize(lightPos - p);
     vec3 n = GetNormal(p);
 
     float dif = clamp(dot(n, l)*.5+.5, 0., 1.);
     float d = RayMarch(p+n*SURF_DIST*2., l).x;
 
-    if (p.y<.01 && d<length(lightPos-p)) dif *= .2;
+    //if (p.y<.01 && d<length(lightPos-p)) dif *= .2;
 
     return dif;
 }
@@ -341,11 +382,17 @@ void main(void)
     vec2 m = u_mouse.xy/u_resolution.xy;
 
     vec3 col = vec3(0);
-    vec3 ro = vec3(0, 4, -5);
-    ro.yz *= Rot(-m.y+.5);
-    ro.xz *= Rot(u_time*.3-m.x*6.2831);
+    vec3 ro = vec3(4.0+ sin(u_time * 0.7) * 3.0, 4.0 + cos(u_time * 1.1) * 3.0, -4.0 + u_time * 8.0);
+//    ro.yz *= Rot(-m.y+.5);
+//    ro.xz *= Rot(-m.x*6.2831);
 
-    vec3 rd = R(uv, ro, vec3(0, 0, 0), 0.5);
+    vec3 lookAt = vec3(0,0,-1);
+
+    lookAt.yz *= Rot(-m.y+.5);
+    lookAt.xz *= Rot(-m.x * tau);
+
+
+    vec3 rd = R(uv, ro, ro + lookAt, 1.0);
 
     vec2 result = RayMarch(ro, rd);
 
@@ -353,12 +400,12 @@ void main(void)
 
     if (d < MAX_DIST) {
         vec3 p = ro + rd * d;
-        float dif = GetLight(p) / (d*d);
+        float dif = GetLight(p) / d;
 
         vec3 tone = hsl2rgb(
-            fract(abs(result.y) + (result.y > 0.0 ? 0.5 : 0.0)),
-            result.y > 0.0 ? 1.0 : 0.5,
-            result.y > 0.0 ? 0.55 : 0.02
+            fract(abs(result.y)),
+            1.0,
+            0.5
         );
 
         tone.x = clamp(tone.x * 2.0, 0.0, 1.0);
@@ -367,7 +414,7 @@ void main(void)
 
     }
 
-    col = pow(col, vec3(.25));// gamma correction
+    col = pow(col, vec3(.4545));	// gamma correction
 
 
 
